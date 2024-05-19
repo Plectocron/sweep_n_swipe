@@ -1,0 +1,203 @@
+local path = game:GetService("PathfindingService"):CreatePath()
+local GeneralGuiManager = require(game.ReplicatedStorage.GeneralGuiManager)
+
+local module = {}
+
+	local walkingToPlayer = false
+	local chasingPlayer = false
+	local playerRecentlyInSight = false
+	
+	--------------------- HUMANOID FUNCTIONS ---------------------
+	
+	function module.paralyzeHumanoid(humanoid)
+		humanoid.WalkSpeed = 0
+		humanoid.JumpHeight = 0
+	end
+
+	function module.resetHumanoidMovementSettings(humanoid)
+		humanoid.WalkSpeed = 8
+		humanoid.JumpHeight = 0
+	end
+		
+	function module.walkToPlayer(player, npc)
+		walkingToPlayer = true
+		while playerRecentlyInSight == false do
+			path:ComputeAsync(npc.HumanoidRootPart.Position, player.Character.HumanoidRootPart.Position)
+			local waypoints = path:GetWaypoints()
+			print(waypoints)
+			
+			local counter = 1
+			local firstIndex = true
+			
+			for _,waypoint in ipairs(waypoints) do
+				if firstIndex then firstIndex = false continue end
+				warn("waypoint created"..tostring(counter))
+				local Part = Instance.new("Part", workspace.WayPoints)
+				Part.Material = "Neon"
+				Part.Size = Vector3.new(0.5,0.5,0.5)
+				Part.Position = waypoint.Position
+				Part.Anchored = true
+				Part.CanCollide = false
+				npc.Humanoid:MoveTo(waypoint.Position)
+				npc.Humanoid.MoveToFinished:Wait()
+				if counter == 3 then print("break"); break end
+				counter += 1
+			end
+			for _, waypoint in ipairs(game.Workspace.WayPoints:GetChildren()) do
+				waypoint:Destroy()
+			end
+			print("donneeeee")
+			walkingToPlayer = false
+		end
+		
+		chasingPlayer = false
+		playerRecentlyInSight = true
+		wait(0.1)
+		print("Done with the walk")
+	end
+	
+	function module.chasePlayer(player, npc)
+		print("chasin")
+		local function destroyPreviousWaypoints()
+			for _, waypoint in ipairs(game.Workspace.WayPoints:GetChildren()) do
+				waypoint:Destroy()
+			end
+		end
+		destroyPreviousWaypoints()
+		npc.Humanoid:MoveTo(player.HumanoidRootPart.Position)
+		chasingPlayer = false
+	end
+
+	-------------------------------------------------------------
+
+	--------------------- UTILITY FUNCTIONS ---------------------
+
+	local function getPartBoundsInBox(part)
+		local touchingPartsInBox = game.Workspace:GetPartBoundsInBox(part.CFrame, part.Size)
+		return touchingPartsInBox
+	end
+	
+	function module.getClosestPlayer(playerTable, npc)
+		local dictModified = false
+		local closestPlayerDict = {
+			name = nil,
+			distanceFromNpc = 9999
+		}
+		for i = 1, #playerTable do
+			local currentPlayer = game.Workspace[playerTable[i]]
+			local isCloserThanPreviousPlayer = (currentPlayer.HumanoidRootPart.Position - npc.HumanoidRootPart.Position).Magnitude < closestPlayerDict.distanceFromNpc
+			if not dictModified or isCloserThanPreviousPlayer then
+				dictModified = true
+				closestPlayerDict.name = currentPlayer.Name
+				closestPlayerDict.distanceFromNpc = (currentPlayer.HumanoidRootPart.Position - npc.HumanoidRootPart.Position).Magnitude
+			end
+		end
+		return game.Workspace[closestPlayerDict.name]
+	end
+
+	
+	function module.respawnPlayerToOriginPoint(player)
+		player.Character:SetPrimaryPartCFrame(CFrame.new(Vector3.new(0,5,0)))
+	end
+
+	function module.enable_walkToRandomNodes(npc)
+		npc.followingPathNode.Value = false
+		npc.playerCaught.Value = false
+		npc.recentlyStoppedFollowingNodes.Value = false
+		module.resetHumanoidMovementSettings(npc.Humanoid)
+		print("resetted")
+	end
+
+	-------------------------------------------------------------
+
+	--------------------- DETECTION FUNCTIONS -------------------
+	
+	function module.NPC_DETECTS_PLAYER(player, npc, detectionZone_Primary, detectionZone_Secondary, hitZone)
+		local npcHRP = npc:FindFirstChild("HumanoidRootPart")
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = {npc, detectionZone_Primary, detectionZone_Secondary, hitZone}
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+		local raycastResult = workspace:Raycast(npcHRP.Position, (player.Character.HumanoidRootPart.Position - npcHRP.Position), raycastParams)
+		local playerWasRecentlyCaught = npc.playerCaught.Value
+
+		local rayInstanceIsPlayer = raycastResult.Instance and raycastResult.Instance:IsDescendantOf(player.Character)
+		if rayInstanceIsPlayer then
+			return true
+		else
+			return false
+		end
+	end
+	
+	function module.getAllPlayersWithinDetectionZone(detectionZone_Primary, detectionZone_Secondary)
+		local touchingPrimaryZone = getPartBoundsInBox(detectionZone_Primary)
+		local touchingSecondaryZone = getPartBoundsInBox(detectionZone_Secondary)
+		local partsTouchingZones = {}
+		local function addPartsTouchingDetectionZonesToTable()
+			for i = 1, #touchingPrimaryZone do
+				table.insert(partsTouchingZones, touchingPrimaryZone[i])
+			end
+			for i = 1, #touchingSecondaryZone do
+				table.insert(partsTouchingZones, touchingSecondaryZone[i])
+			end
+		end
+		addPartsTouchingDetectionZonesToTable()
+		local playerTable = {}
+		for i = 1, #partsTouchingZones do
+			local isNewPlayer = partsTouchingZones[i].Parent:FindFirstChild("Humanoid") and not table.find(playerTable, partsTouchingZones[i].Parent.Name) and not partsTouchingZones[i].Parent:FindFirstChild("isNPC")
+			local isNPC = partsTouchingZones[i].Parent:FindFirstChild("isNPC")
+			if isNewPlayer and not isNPC then
+				table.insert(playerTable, partsTouchingZones[i].Parent.Name)
+			end
+		end
+		return playerTable
+	end
+
+	function module.OnPlayerEnteredDetectionZone(player, npc, detectionZone_Primary, detectionZone_Secondary, hitZone)
+		local playersWithinZones = module.getAllPlayersWithinDetectionZone(detectionZone_Primary, detectionZone_Secondary)
+		if #playersWithinZones == 0 or chasingPlayer then return end
+		local walkToPlayer = coroutine.create(module.walkToPlayer)
+		if module.NPC_DETECTS_PLAYER(player, npc, detectionZone_Primary, detectionZone_Secondary, hitZone) then
+			npc.playerCaught.Value = true
+			chasingPlayer = true
+			playerRecentlyInSight = true
+			coroutine.close(walkToPlayer)
+			local closestPlayer = module.getClosestPlayer(playersWithinZones, npc)
+			module.chasePlayer(closestPlayer, npc)
+		elseif playerRecentlyInSight then
+			print(tostring(npc.playerCaught.Value)..tostring(game.Workspace.NPC.playerCaught.Value).."171")
+			npc.playerCaught.Value = true
+			if walkingToPlayer then return end
+			playerRecentlyInSight = false
+			coroutine.resume(walkToPlayer, player, npc) return
+		end
+	end
+
+	function module.OnPlayerEnteredHitZone(player, npc, detectionZone_Primary, detectionZone_Secondary, hitZone, animationTrack)
+		if module.NPC_DETECTS_PLAYER(player, npc, detectionZone_Primary, detectionZone_Secondary, hitZone) then
+			npc.playerCaught.Value = true
+			local humanoid = player.Character:FindFirstChild("Humanoid")
+			module.paralyzeHumanoid(player.Character.Humanoid)
+			module.paralyzeHumanoid(npc.Humanoid)
+			if not npc.isHitting.Value then
+				npc.isHitting.Value = true
+				print(animationTrack.IsPlaying)
+				animationTrack:Play()
+				GeneralGuiManager.fadeInGui(player.PlayerGui.blackScreen.Frame)
+				task.wait(0.5)
+				npc.punchSFX:Play()
+				task.wait(1.5)
+				module.respawnPlayerToOriginPoint(player)
+				GeneralGuiManager.fadeOutGui(player.PlayerGui.blackScreen.Frame)
+				task.wait(1)
+				player.PlayerGui.blackScreen.Enabled = false
+				module.resetHumanoidMovementSettings(player.Character.Humanoid)
+				npc.isHitting.Value = false
+				wait(5)
+				module.enable_walkToRandomNodes(npc)
+			end
+		end
+	end
+	
+	-------------------------------------------------------------
+return module
