@@ -6,24 +6,20 @@ local playerCaught = false
 local previousNode = nil
 local recentlyStoppedFollowingNodes = script.Parent.recentlyStoppedFollowingNodes.Value
 local lastCaughtWaypoint = 0
+local walkToPathNode_CRT_running = false
 
 local path = PathfindingService:CreatePath()
 
 local function walkToRandomPathNode()
 	wait(0.01)
-	print("in")
 	if script.Parent.followingPathNode.Value or script.Parent.playerCaught.Value then print("out"..tostring(script.Parent.followingPathNode.Value)..tostring(script.Parent.playerCaught.Value)); return end
-	print("in2")
 	script.Parent.followingPathNode.Value = true
 	local currentNode = pathNodes[math.random(1,#pathNodes)].Position
 	path:ComputeAsync(StartPoint.Position,currentNode)
-	print("in3")
 	while currentNode == previousNode do
-		print("renewing node")
 		currentNode = pathNodes[math.random(1,#pathNodes)].Position
 		path:ComputeAsync(StartPoint.Position,currentNode)
 	end
-	print("creatin waypoints")
 	local waypoints = path:GetWaypoints()
 
 	local function checkIfPlayerCaught()
@@ -35,18 +31,14 @@ local function walkToRandomPathNode()
 	end
 
 	for _,waypoint in ipairs(waypoints) do
-		print(script.Parent.recentlyStoppedFollowingNodes.Value)
-		if script.Parent.recentlyStoppedFollowingNodes.Value then script.Parent.recentlyStoppedFollowingNodes.Value = false return end
-		warn("waypoint created"..tostring(script.Parent.playerCaught.Value)..tostring(_))
-		if script.Parent.playerCaught.Value == true then print("we've stopped") break end -- this is the breakpoint where playerCaught could be true, disabling the function
-		print("creatin part")
+		if script.Parent.recentlyStoppedFollowingNodes.Value then script.Parent.recentlyStoppedFollowingNodes.Value = false; return end
+		if script.Parent.playerCaught.Value == true then break end -- this is the breakpoint where playerCaught could be true, disabling the function
 		local Part = Instance.new("Part", workspace.WayPoints)
 		Part.Material = "Neon"
 		Part.Size = Vector3.new(0.5,0.5,0.5)
 		Part.Position = waypoint.Position
 		Part.Anchored = true
 		Part.CanCollide = false
-		print("created, now movin")
 		Humanoid:MoveTo(waypoint.Position)
 		Humanoid.MoveToFinished:Wait()
 	end
@@ -55,28 +47,27 @@ local function walkToRandomPathNode()
 	end
 	wait(2)
 	previousNode = currentNode
-	print("Done with the Node")
+	print("Done walking to Node")
 	script.Parent.followingPathNode.Value = false
+	walkToPathNode_CRT_running = false
 end
 
 local walkToPathNode_CRT = coroutine.create(walkToRandomPathNode)
 
 local roamMap = coroutine.wrap(function()
 	while true do
-		task.wait(0.1); print(tostring(script.Parent.playerCaught.Value)..tostring(script.Parent.followingPathNode.Value))
+		task.wait(0.1)
 		while script.Parent.playerCaught.Value == false do
 			task.wait(0.05)
-			--print("calllled"..tostring(script.Parent.playerCaught.Value))
-			if coroutine.status(walkToPathNode_CRT) ~= "running" then
-				print("not running, calling")
+			if walkToPathNode_CRT_running == false then
+				walkToPathNode_CRT_running = true
 				walkToPathNode_CRT = coroutine.create(walkToRandomPathNode)
 				coroutine.resume(walkToPathNode_CRT)
-				print("called")
 			end
 		end
 		if script.Parent.playerCaught.Value == true then
 			coroutine.close(walkToPathNode_CRT)
-			--print("closed")
+			walkToPathNode_CRT_running = false
 		end
 	end
 end)
@@ -85,5 +76,5 @@ wait(5)
 local PLAYER_NOT_DETECTED_AND_NOT_WALKING_TO_NODE = not script.Parent.playerCaught.Value and not script.Parent.followingPathNode.Value
 if PLAYER_NOT_DETECTED_AND_NOT_WALKING_TO_NODE then
 	roamMap()
-	print("called")
+	print("NPC Roaming")
 end
